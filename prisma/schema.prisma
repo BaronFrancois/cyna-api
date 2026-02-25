@@ -1,0 +1,440 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── ENUMS ───────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  ACTIVE
+  CANCELLED
+  REFUNDED
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+  PER_USER
+  PER_DEVICE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  PAUSED
+}
+
+enum ContactStatus {
+  NEW
+  READ
+  REPLIED
+  CLOSED
+}
+
+enum ContactSource {
+  FORM
+  CHATBOT
+}
+
+enum ChatbotSessionStatus {
+  OPEN
+  ESCALATED
+  CLOSED
+}
+
+enum ChatbotSender {
+  USER
+  BOT
+  AGENT
+}
+
+// ─── UTILISATEURS & AUTH ─────────────────────────────────────
+
+model User {
+  id                     Int       @id @default(autoincrement())
+  firstName              String
+  lastName               String
+  email                  String    @unique
+  passwordHash           String
+  emailVerified          Boolean   @default(false)
+  emailVerificationToken String?   @unique
+  emailVerifiedAt        DateTime?
+  role                   Role      @default(USER)
+  twoFactorEnabled       Boolean   @default(false)
+  twoFactorSecret        String?
+  lastLoginAt            DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  // Relations
+  sessions             Session[]
+  passwordResetTokens  PasswordResetToken[]
+  addresses            Address[]
+  paymentMethods       PaymentMethod[]
+  carts                Cart[]
+  orders               Order[]
+  subscriptions        Subscription[]
+  invoices             Invoice[]
+  contactMessages      ContactMessage[]
+  chatbotSessions      ChatbotSession[]
+
+  @@map("users")
+}
+
+model Session {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  token       String   @unique
+  rememberMe  Boolean  @default(false)
+  expiresAt   DateTime
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+// ─── ADRESSES ────────────────────────────────────────────────
+
+model Address {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  firstName   String
+  lastName    String
+  addressLine1 String
+  addressLine2 String?
+  city        String
+  region      String?
+  postalCode  String
+  country     String
+  phone       String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@map("addresses")
+}
+
+// ─── PAIEMENT ────────────────────────────────────────────────
+
+model PaymentMethod {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  providerToken   String   // token Stripe / PayPal, jamais les données brutes
+  cardHolderName  String
+  last4Digits     String
+  cardBrand       String   // visa, mastercard, amex...
+  expMonth        Int
+  expYear         Int
+  isDefault       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@map("payment_methods")
+}
+
+// ─── CATALOGUE ───────────────────────────────────────────────
+
+model Category {
+  id           Int      @id @default(autoincrement())
+  name         String
+  slug         String   @unique
+  description  String?
+  imageUrl     String?
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id                 Int      @id @default(autoincrement())
+  categoryId         Int
+  name               String
+  slug               String   @unique
+  shortDescription   String?
+  description        String?
+  technicalSpecs     String?
+  basePrice          Decimal  @db.Decimal(10, 2)
+  isAvailable        Boolean  @default(true)
+  isFeatured         Boolean  @default(false) // top produit du moment
+  priorityOrder      Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  category          Category           @relation(fields: [categoryId], references: [id])
+  images            ProductImage[]
+  subscriptionPlans SubscriptionPlan[]
+  cartItems         CartItem[]
+  orderItems        OrderItem[]
+  subscriptions     Subscription[]
+
+  @@map("products")
+}
+
+model ProductImage {
+  id           Int      @id @default(autoincrement())
+  productId    Int
+  imageUrl     String
+  displayOrder Int      @default(0)
+  altText      String?
+  createdAt    DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_images")
+}
+
+model SubscriptionPlan {
+  id           Int          @id @default(autoincrement())
+  productId    Int
+  label        String       // "Mensuel", "Annuel", "Par utilisateur"...
+  billingCycle BillingCycle
+  price        Decimal      @db.Decimal(10, 2)
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  product       Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+// ─── PAGE D'ACCUEIL ──────────────────────────────────────────
+
+model CarouselItem {
+  id           Int      @id @default(autoincrement())
+  imageUrl     String
+  title        String?
+  subtitle     String?
+  linkUrl      String?
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("carousel_items")
+}
+
+model HomeTextBlock {
+  id         Int      @id @default(autoincrement())
+  identifier String   @unique // ex: "hero_text", "promo_banner"
+  content    String
+  updatedAt  DateTime @updatedAt
+
+  @@map("home_text_blocks")
+}
+
+// ─── PANIER ──────────────────────────────────────────────────
+
+model Cart {
+  id          Int      @id @default(autoincrement())
+  userId      Int?     // null si invité
+  guestToken  String?  @unique // uuid pour les invités
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user  User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id                 Int      @id @default(autoincrement())
+  cartId             Int
+  productId          Int
+  subscriptionPlanId Int
+  quantity           Int      @default(1)
+  unitPrice          Decimal  @db.Decimal(10, 2) // snapshot prix au moment de l'ajout
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  cart             Cart             @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id])
+  subscriptionPlan SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
+
+  @@map("cart_items")
+}
+
+// ─── COMMANDES ───────────────────────────────────────────────
+
+model Order {
+  id                Int         @id @default(autoincrement())
+  userId            Int
+  billingAddressId  Int
+  paymentMethodId   Int
+  orderNumber       String      @unique
+  status            OrderStatus @default(PENDING)
+  subtotal          Decimal     @db.Decimal(10, 2)
+  taxAmount         Decimal     @db.Decimal(10, 2) @default(0)
+  totalAmount       Decimal     @db.Decimal(10, 2)
+  paymentProvider   String?     // "stripe" | "paypal"
+  paymentIntentId   String?     @unique
+  paidAt            DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  user           User          @relation(fields: [userId], references: [id])
+  billingAddress Address       @relation(fields: [billingAddressId], references: [id])
+  paymentMethod  PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  items          OrderItem[]
+  invoice        Invoice?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id                 Int      @id @default(autoincrement())
+  orderId            Int
+  productId          Int
+  subscriptionPlanId Int
+  productName        String   // snapshot nom au moment de l'achat
+  planLabel          String   // snapshot label plan
+  quantity           Int
+  unitPrice          Decimal  @db.Decimal(10, 2)
+  totalPrice         Decimal  @db.Decimal(10, 2)
+  createdAt          DateTime @default(now())
+
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id])
+  subscriptionPlan SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
+  subscription     Subscription?
+
+  @@map("order_items")
+}
+
+// ─── ABONNEMENTS ─────────────────────────────────────────────
+
+model Subscription {
+  id                 Int                @id @default(autoincrement())
+  userId             Int
+  orderItemId        Int                @unique
+  productId          Int
+  subscriptionPlanId Int
+  status             SubscriptionStatus @default(ACTIVE)
+  startDate          DateTime
+  endDate            DateTime
+  nextRenewalDate    DateTime?
+  autoRenew          Boolean            @default(true)
+  cancelledAt        DateTime?
+  cancellationReason String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user             User             @relation(fields: [userId], references: [id])
+  orderItem        OrderItem        @relation(fields: [orderItemId], references: [id])
+  product          Product          @relation(fields: [productId], references: [id])
+  subscriptionPlan SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
+
+  @@map("subscriptions")
+}
+
+// ─── FACTURES ────────────────────────────────────────────────
+
+model Invoice {
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @unique
+  userId        Int
+  invoiceNumber String   @unique
+  pdfUrl        String?
+  amount        Decimal  @db.Decimal(10, 2)
+  issuedAt      DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@map("invoices")
+}
+
+// ─── CONTACT & SUPPORT ───────────────────────────────────────
+
+model ContactMessage {
+  id        Int           @id @default(autoincrement())
+  userId    Int?          // null si non connecté
+  email     String
+  subject   String
+  message   String
+  status    ContactStatus @default(NEW)
+  source    ContactSource @default(FORM)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("contact_messages")
+}
+
+model ChatbotSession {
+  id          Int                  @id @default(autoincrement())
+  userId      Int?                 // null si non connecté
+  guestToken  String?
+  status      ChatbotSessionStatus @default(OPEN)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  user     User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages ChatbotMessage[]
+
+  @@map("chatbot_sessions")
+}
+
+model ChatbotMessage {
+  id               Int           @id @default(autoincrement())
+  chatbotSessionId Int
+  sender           ChatbotSender
+  content          String
+  sentAt           DateTime      @default(now())
+
+  session ChatbotSession @relation(fields: [chatbotSessionId], references: [id], onDelete: Cascade)
+
+  @@map("chatbot_messages")
+}
+
