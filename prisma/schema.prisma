@@ -6,7 +6,7 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
+  // output   = "../generated/prisma"
 }
 
 datasource db {
@@ -70,6 +70,7 @@ enum ChatbotSender {
 
 model User {
   id                     Int       @id @default(autoincrement())
+  stripeCustomerId       String?   @unique
   firstName              String
   lastName               String
   email                  String    @unique
