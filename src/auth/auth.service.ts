@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import * as nodemailer from 'nodemailer';
+import { randomInt } from 'crypto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -78,8 +79,8 @@ export class AuthService {
       return { message: 'Si cet email existe, un code de réinitialisation a été envoyé.' };
     }
 
-    // Génération d'un code à 6 chiffres
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    // Génération d'un code à 6 chiffres (cryptographiquement sécurisé)
+    const code = randomInt(100000, 1000000).toString();
     const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
     await this.prisma.user.update({
@@ -87,7 +88,11 @@ export class AuthService {
       data: { resetPasswordCode: code, resetPasswordExpires: expires },
     });
 
-    await this.sendResetCodeEmail(user.email, user.firstName, code);
+    try {
+      await this.sendResetCodeEmail(user.email, user.firstName, code);
+    } catch {
+      // L'email n'a pas pu être envoyé, mais on ne révèle pas l'erreur
+    }
 
     return { message: 'Si cet email existe, un code de réinitialisation a été envoyé.' };
   }
