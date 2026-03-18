@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -11,21 +12,34 @@ async function bootstrap() {
 
   app.enableVersioning({
     type: VersioningType.URI,
-  })
+  });
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
+
+  app.enableCors({
+    origin: process.env.FRONTEND_URL || '*',
+    credentials: true,
+  });
 
   const config = new DocumentBuilder()
-    .setTitle('KitBase API')
-    .setDescription('The KitBase API description')
-    .setVersion('0.0.1')
-    .addTag('kitbase')
+    .setTitle('Cyna API')
+    .setDescription('API de la plateforme Cyna')
+    .setVersion('1.0')
+    .addBearerAuth()
     .build();
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, documentFactory(), {
-    swaggerOptions: {
-      defaultModelsExpandDepth: -1,
-    },
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('docs', app, document, {
+    swaggerOptions: { defaultModelsExpandDepth: -1 },
   });
 
   await app.listen(process.env.PORT ?? 3000);
+  console.log(`Application running on: ${await app.getUrl()}`);
+  console.log(`Swagger docs: ${await app.getUrl()}/docs`);
 }
 bootstrap();
