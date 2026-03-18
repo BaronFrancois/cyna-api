@@ -1,14 +1,9 @@
-import {
-  Injectable,
-  ConflictException,
-  UnauthorizedException,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
+import * as nodemailer from 'nodemailer';
+import { randomInt } from 'crypto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -17,16 +12,18 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
-    private jwtService: JwtService,
+    private readonly prisma: PrismaService,
+    private readonly jwtService: JwtService,
   ) {}
 
+  // ─── POST /auth/register ──────────────────────────────────────────────────
   async register(dto: RegisterDto) {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (existing) throw new ConflictException('Email déjà utilisé');
+    if (existing) {
+      throw new BadRequestException('Un compte avec cet email existe déjà.');
+    }
 
-    const passwordHash = await bcrypt.hash(dto.password, 12);
-    const emailVerificationToken = randomBytes(32).toString('hex');
+    const passwordHash = await bcrypt.hash(dto.password, 10);
 
     const user = await this.prisma.user.create({
       data: {
@@ -34,47 +31,35 @@ export class AuthService {
         lastName: dto.lastName,
         email: dto.email,
         passwordHash,
-        emailVerificationToken,
       },
+      select: { id: true, firstName: true, lastName: true, email: true, role: true, createdAt: true },
     });
 
-    // TODO: envoyer un email de vérification avec emailVerificationToken
-
-    return { message: 'Compte créé. Veuillez vérifier votre email.' };
+    return { message: 'Compte créé avec succès.', user };
   }
 
-  async login(dto: LoginDto, ip?: string, userAgent?: string) {
+  // ─── POST /auth/login ─────────────────────────────────────────────────────
+  async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (!user) throw new UnauthorizedException('Identifiants invalides');
+    if (!user) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect.');
+    }
 
-    const valid = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!valid) throw new UnauthorizedException('Identifiants invalides');
-
-    const expiresIn = dto.rememberMe ? '30d' : '1d';
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + (dto.rememberMe ? 30 : 1));
-
-    const payload = { sub: user.id, email: user.email, role: user.role };
-    const token = await this.jwtService.signAsync(payload, { expiresIn });
-
-    await this.prisma.session.create({
-      data: {
-        userId: user.id,
-        token,
-        rememberMe: dto.rememberMe ?? false,
-        expiresAt,
-        ipAddress: ip,
-        userAgent,
-      },
-    });
+    const passwordMatch = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!passwordMatch) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect.');
+    }
 
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
 
+    const payload = { sub: user.id, email: user.email, role: user.role };
+    const accessToken = this.jwtService.sign(payload);
+
     return {
-      access_token: token,
+      accessToken,
       user: {
         id: user.id,
         firstName: user.firstName,
@@ -85,67 +70,85 @@ export class AuthService {
     };
   }
 
-  async logout(token: string) {
-    await this.prisma.session.deleteMany({ where: { token } });
-    return { message: 'Déconnecté avec succès' };
+  // ─── POST /auth/forgot-password ───────────────────────────────────────────
+  async forgotPassword(dto: ForgotPasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+
+    // On répond toujours avec succès pour ne pas révéler si l'email existe
+    if (!user) {
+      return { message: 'Si cet email existe, un code de réinitialisation a été envoyé.' };
+    }
+
+    // Génération d'un code à 6 chiffres (cryptographiquement sécurisé)
+    const code = randomInt(100000, 1000000).toString();
+    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { resetPasswordCode: code, resetPasswordExpires: expires },
+    });
+
+    try {
+      await this.sendResetCodeEmail(user.email, user.firstName, code);
+    } catch {
+      // L'email n'a pas pu être envoyé, mais on ne révèle pas l'erreur
+    }
+
+    return { message: 'Si cet email existe, un code de réinitialisation a été envoyé.' };
   }
 
-  async verifyEmail(token: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { emailVerificationToken: token },
-    });
-    if (!user) throw new BadRequestException('Token invalide');
+  // ─── POST /auth/forgot-password/code ─────────────────────────────────────
+  async resetPasswordWithCode(dto: ResetPasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user) {
+      throw new BadRequestException('Utilisateur introuvable.');
+    }
+
+    if (!user.resetPasswordCode || user.resetPasswordCode !== dto.code) {
+      throw new BadRequestException('Code de réinitialisation invalide.');
+    }
+
+    if (!user.resetPasswordExpires || user.resetPasswordExpires < new Date()) {
+      throw new BadRequestException('Le code de réinitialisation a expiré.');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
 
     await this.prisma.user.update({
       where: { id: user.id },
       data: {
-        emailVerified: true,
-        emailVerifiedAt: new Date(),
-        emailVerificationToken: null,
+        passwordHash,
+        resetPasswordCode: null,
+        resetPasswordExpires: null,
       },
     });
 
-    return { message: 'Email vérifié avec succès' };
+    return { message: 'Mot de passe réinitialisé avec succès.' };
   }
 
-  async forgotPassword(dto: ForgotPasswordDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    // Ne pas révéler si l'email existe
-    if (!user) return { message: 'Si ce compte existe, un email a été envoyé.' };
-
-    const token = randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 heure
-
-    await this.prisma.passwordResetToken.create({
-      data: { userId: user.id, token, expiresAt },
+  // ─── Envoi d'email ────────────────────────────────────────────────────────
+  private async sendResetCodeEmail(email: string, firstName: string, code: string) {
+    const transporter = nodemailer.createTransport({
+      host: process.env.MAIL_HOST,
+      port: Number(process.env.MAIL_PORT) || 587,
+      secure: false,
+      auth: {
+        user: process.env.MAIL_USER,
+        pass: process.env.MAIL_PASS,
+      },
     });
 
-    // TODO: envoyer un email avec le token
-
-    return { message: 'Si ce compte existe, un email a été envoyé.' };
-  }
-
-  async resetPassword(dto: ResetPasswordDto) {
-    const record = await this.prisma.passwordResetToken.findUnique({
-      where: { token: dto.token },
+    await transporter.sendMail({
+      from: `"Cyna" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
+      to: email,
+      subject: 'Réinitialisation de mot de passe',
+      html: `
+        <p>Bonjour ${firstName},</p>
+        <p>Votre code de réinitialisation de mot de passe est :</p>
+        <h2 style="letter-spacing: 4px;">${code}</h2>
+        <p>Ce code est valable <strong>15 minutes</strong>.</p>
+        <p>Si vous n'avez pas fait cette demande, ignorez cet email.</p>
+      `,
     });
-
-    if (!record || record.used || record.expiresAt < new Date()) {
-      throw new BadRequestException('Token invalide ou expiré');
-    }
-
-    const passwordHash = await bcrypt.hash(dto.newPassword, 12);
-
-    await this.prisma.user.update({
-      where: { id: record.userId },
-      data: { passwordHash },
-    });
-
-    await this.prisma.passwordResetToken.update({
-      where: { id: record.id },
-      data: { used: true },
-    });
-
-    return { message: 'Mot de passe réinitialisé avec succès' };
   }
 }
