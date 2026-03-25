@@ -4,18 +4,21 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { Public } from '../common/decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   /** POST /auth/register */
+  @Public()
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
 
   /** POST /auth/login */
+  @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto) {
@@ -23,6 +26,7 @@ export class AuthController {
   }
 
   /** POST /auth/forgot-password */
+  @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   forgotPassword(@Body() dto: ForgotPasswordDto) {
@@ -30,6 +34,7 @@ export class AuthController {
   }
 
   /** POST /auth/forgot-password/code */
+  @Public()
   @Post('forgot-password/code')
   @HttpCode(HttpStatus.OK)
   resetPasswordWithCode(@Body() dto: ResetPasswordDto) {
