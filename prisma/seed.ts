@@ -20,7 +20,7 @@ async function main() {
       firstName: 'Admin',
       lastName: 'Cyna',
       email,
-      password: hashed,
+      passwordHash: hashed,
       role: Role.ADMIN,
     },
   });

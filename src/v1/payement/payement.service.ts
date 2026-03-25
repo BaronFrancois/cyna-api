@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { env } from "process";
-import { PrismaService } from "src/common/prisma/prisma.service";
+import { PrismaService } from "src/prisma/prisma.service";
 import Stripe from "stripe";
 
 @Injectable()
