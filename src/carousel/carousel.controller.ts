@@ -14,7 +14,7 @@ import { CreateCarouselItemDto } from './dto/create-carousel-item.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Role } from '../../generated/prisma';
+import { Role } from '@prisma/client';
 
 @Controller('carousel')
 export class CarouselController {

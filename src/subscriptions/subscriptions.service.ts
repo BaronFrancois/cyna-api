@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CancelSubscriptionDto } from './dto/cancel-subscription.dto';
-import { SubscriptionStatus } from '../../generated/prisma';
+import { SubscriptionStatus } from '@prisma/client';
 
 @Injectable()
 export class SubscriptionsService {

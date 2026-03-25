@@ -13,7 +13,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Role, OrderStatus } from '../../generated/prisma';
+import { Role, OrderStatus } from '@prisma/client';
 
 @UseGuards(RolesGuard)
 @Controller('orders')
