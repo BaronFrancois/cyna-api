@@ -1,4 +1,6 @@
-import { Body, Controller, Post } from "@nestjs/common";
+import { Body, Controller, Headers, Post, RawBodyRequest, Req } from "@nestjs/common";
+import { Request } from "express";
+import { Public } from "src/common/decorators/public.decorator";
 import { PayementService } from "./payement.service";
 
 @Controller({ path: 'payement', version: '1' })
@@ -24,5 +26,14 @@ export class PayementController {
     @Post('confirm-3ds')
     async confirm3DS(@Body('paymentIntentId') paymentIntentId: string) {
         return this.payementService.confirmAfter3DS(paymentIntentId);
+    }
+
+    @Public()
+    @Post('webhook')
+    async stripeWebhook(
+        @Req() req: RawBodyRequest<Request>,
+        @Headers('stripe-signature') signature: string,
+    ) {
+        return this.payementService.handleWebhook(req.rawBody, signature);
     }
 }

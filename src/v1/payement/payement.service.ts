@@ -161,6 +161,77 @@ export class PayementService {
         return { success: paymentIntent.status === 'succeeded' };
     }
 
-    // WebHook
-    // async WebHook    
+    // ─── WEBHOOK STRIPE ───────────────────────────────────────────────────────
+
+    async handleWebhook(rawBody: Buffer, signature: string) {
+        let event: Stripe.Event;
+
+        try {
+            event = this.client.webhooks.constructEvent(
+                rawBody,
+                signature,
+                env.STRIPE_WEBHOOK_SECRET,
+            );
+        } catch {
+            throw new Error('Signature webhook invalide');
+        }
+
+        if (event.type === 'payment_intent.succeeded') {
+            const paymentIntent = event.data.object as Stripe.PaymentIntent;
+            const orderId = Number(paymentIntent.metadata?.orderId);
+            if (!orderId) return { received: true };
+
+            const order = await this.prismaService.order.findUnique({
+                where: { id: orderId },
+                include: { items: { include: { subscriptionPlan: true } } },
+            });
+            if (!order) return { received: true };
+
+            // Marquer la commande comme payée
+            await this.prismaService.order.update({
+                where: { id: orderId },
+                data: { status: 'PAID', paidAt: new Date() },
+            });
+
+            // Créer les abonnements pour chaque ligne de commande
+            for (const item of order.items) {
+                const plan = item.subscriptionPlan;
+                const startDate = new Date();
+                const endDate = new Date(startDate);
+
+                if (plan.billingCycle === 'YEARLY') {
+                    endDate.setFullYear(endDate.getFullYear() + 1);
+                } else {
+                    endDate.setMonth(endDate.getMonth() + 1);
+                }
+
+                await this.prismaService.subscription.create({
+                    data: {
+                        userId: order.userId,
+                        orderItemId: item.id,
+                        productId: item.productId,
+                        subscriptionPlanId: item.subscriptionPlanId,
+                        status: 'ACTIVE',
+                        startDate,
+                        endDate,
+                        nextRenewalDate: endDate,
+                        autoRenew: true,
+                    },
+                });
+            }
+
+            // Créer la facture
+            await this.prismaService.invoice.create({
+                data: {
+                    orderId: order.id,
+                    userId: order.userId,
+                    invoiceNumber: `INV-${Date.now()}`,
+                    amount: order.totalAmount,
+                    issuedAt: new Date(),
+                },
+            });
+        }
+
+        return { received: true };
+    }
 }
