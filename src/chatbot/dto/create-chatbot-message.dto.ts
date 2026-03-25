@@ -1,5 +1,5 @@
 import { IsString, IsEnum, IsOptional } from 'class-validator';
-import { ChatbotSender } from '../../../generated/prisma';
+import { ChatbotSender } from '@prisma/client';
 
 export class CreateChatbotMessageDto {
   @IsEnum(ChatbotSender)

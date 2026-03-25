@@ -15,7 +15,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Public } from '../common/decorators/public.decorator';
-import { Role, ContactStatus } from '../../generated/prisma';
+import { Role, ContactStatus } from '@prisma/client';
 
 @Controller('contact')
 export class ContactController {

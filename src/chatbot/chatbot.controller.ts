@@ -15,7 +15,7 @@ import { CreateChatbotMessageDto } from './dto/create-chatbot-message.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Role, ChatbotSessionStatus } from '../../generated/prisma';
+import { Role, ChatbotSessionStatus } from '@prisma/client';
 
 @Controller('chatbot')
 export class ChatbotController {

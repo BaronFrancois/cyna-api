@@ -1,6 +1,6 @@
 import { IsString, IsInt, IsBoolean, IsOptional, IsEnum, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
-import { BillingCycle } from '../../../generated/prisma';
+import { BillingCycle } from '@prisma/client';
 
 export class CreateSubscriptionPlanDto {
   @IsInt()
