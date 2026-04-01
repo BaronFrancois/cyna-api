@@ -11,7 +11,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ChatbotService } from './chatbot.service';
+import { CynaAssistantService } from './cyna-assistant.service';
 import { CreateChatbotMessageDto } from './dto/create-chatbot-message.dto';
+import { VitrineChatDto } from './dto/vitrine-chat.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -19,7 +21,17 @@ import { Role, ChatbotSessionStatus } from '@prisma/client';
 
 @Controller('chatbot')
 export class ChatbotController {
-  constructor(private chatbotService: ChatbotService) {}
+  constructor(
+    private chatbotService: ChatbotService,
+    private cynaAssistantService: CynaAssistantService,
+  ) {}
+
+  /** Chat vitrine (Groq / Gemini) — clés dans .env API uniquement */
+  @Public()
+  @Post('vitrine')
+  vitrineChat(@Body() dto: VitrineChatDto) {
+    return this.cynaAssistantService.reply(dto);
+  }
 
   @Public()
   @Post('sessions')
