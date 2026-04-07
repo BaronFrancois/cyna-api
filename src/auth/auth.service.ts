@@ -1,13 +1,23 @@
-import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import * as nodemailer from 'nodemailer';
-import { randomInt } from 'crypto';
+import { randomBytes } from 'crypto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResetPasswordTokenDto } from './dto/reset-password-token.dto';
+
+const RESET_LINK_HOURS = 24;
+const VERIFY_LINK_HOURS = 24;
 
 @Injectable()
 export class AuthService {
@@ -15,6 +25,10 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
   ) {}
+
+  private frontendBase(): string {
+    return (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+  }
 
   // ─── POST /auth/register ──────────────────────────────────────────────────
   async register(dto: RegisterDto) {
@@ -24,6 +38,7 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
+    const emailVerificationToken = randomBytes(32).toString('hex');
 
     const user = await this.prisma.user.create({
       data: {
@@ -31,11 +46,47 @@ export class AuthService {
         lastName: dto.lastName,
         email: dto.email,
         passwordHash,
+        emailVerified: false,
+        emailVerificationToken,
       },
       select: { id: true, firstName: true, lastName: true, email: true, role: true, createdAt: true },
     });
 
-    return { message: 'Compte créé avec succès.', user };
+    try {
+      await this.sendVerificationEmail(user.email, user.firstName, emailVerificationToken);
+    } catch {
+      // Ne bloque pas l'inscription si l'email est indisponible
+    }
+    if (!process.env.MAIL_HOST) {
+      const u = `${this.frontendBase()}/auth/verify-email?token=${encodeURIComponent(emailVerificationToken)}`;
+      console.warn(`[auth] MAIL_HOST non configuré — lien de confirmation (dev) : ${u}`);
+    }
+
+    return {
+      message: 'Compte créé. Un email de confirmation vous a été envoyé.',
+      user,
+    };
+  }
+
+  // ─── POST /auth/verify-email ──────────────────────────────────────────────
+  async verifyEmail(dto: VerifyEmailDto) {
+    const user = await this.prisma.user.findFirst({
+      where: { emailVerificationToken: dto.token },
+    });
+    if (!user) {
+      throw new BadRequestException('Lien de confirmation invalide ou déjà utilisé.');
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerified: true,
+        emailVerificationToken: null,
+        emailVerifiedAt: new Date(),
+      },
+    });
+
+    return { message: 'Adresse e-mail confirmée. Vous pouvez vous connecter.' };
   }
 
   // ─── POST /auth/login ─────────────────────────────────────────────────────
@@ -47,7 +98,13 @@ export class AuthService {
 
     const passwordMatch = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordMatch) {
-      throw new UnauthorizedException('Email ou mot de passe incorrect.');
+      throw new UnauthorizedException('Mot de passe incorrect.');
+    }
+
+    if (!user.emailVerified) {
+      throw new ForbiddenException(
+        'Veuillez confirmer votre adresse e-mail avant de vous connecter. Vérifiez votre boîte de réception.',
+      );
     }
 
     await this.prisma.user.update({
@@ -74,30 +131,65 @@ export class AuthService {
   async forgotPassword(dto: ForgotPasswordDto) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
-    // On répond toujours avec succès pour ne pas révéler si l'email existe
     if (!user) {
-      return { message: 'Si cet email existe, un code de réinitialisation a été envoyé.' };
+      return { message: 'Si cet email existe, un lien de réinitialisation a été envoyé.' };
     }
 
-    // Génération d'un code à 6 chiffres (cryptographiquement sécurisé)
-    const code = randomInt(100000, 1000000).toString();
-    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + RESET_LINK_HOURS * 60 * 60 * 1000);
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { resetPasswordCode: code, resetPasswordExpires: expires },
+    await this.prisma.passwordResetToken.deleteMany({
+      where: { userId: user.id, used: false },
+    });
+
+    await this.prisma.passwordResetToken.create({
+      data: { userId: user.id, token, expiresAt },
     });
 
     try {
-      await this.sendResetCodeEmail(user.email, user.firstName, code);
+      await this.sendResetLinkEmail(user.email, user.firstName, token);
     } catch {
-      // L'email n'a pas pu être envoyé, mais on ne révèle pas l'erreur
+      // Ne pas révéler l'échec d'envoi
+    }
+    if (!process.env.MAIL_HOST) {
+      const u = `${this.frontendBase()}/auth/reset-password?token=${encodeURIComponent(token)}`;
+      console.warn(`[auth] MAIL_HOST non configuré — lien de réinitialisation (dev) : ${u}`);
     }
 
-    return { message: 'Si cet email existe, un code de réinitialisation a été envoyé.' };
+    return { message: 'Si cet email existe, un lien de réinitialisation a été envoyé.' };
   }
 
-  // ─── POST /auth/forgot-password/code ─────────────────────────────────────
+  // ─── POST /auth/reset-password/token ──────────────────────────────────────
+  async resetPasswordWithLink(dto: ResetPasswordTokenDto) {
+    const row = await this.prisma.passwordResetToken.findUnique({
+      where: { token: dto.token },
+      include: { user: true },
+    });
+
+    if (!row || row.used) {
+      throw new BadRequestException('Lien de réinitialisation invalide ou déjà utilisé.');
+    }
+    if (row.expiresAt < new Date()) {
+      throw new BadRequestException('Ce lien a expiré. Demandez un nouveau lien depuis la page « Mot de passe oublié ».');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: row.userId },
+        data: { passwordHash },
+      }),
+      this.prisma.passwordResetToken.update({
+        where: { id: row.id },
+        data: { used: true },
+      }),
+    ]);
+
+    return { message: 'Mot de passe réinitialisé avec succès.' };
+  }
+
+  // ─── POST /auth/forgot-password/code (ancien flux à 6 chiffres) ───────────
   async resetPasswordWithCode(dto: ResetPasswordDto) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (!user) {
@@ -126,9 +218,9 @@ export class AuthService {
     return { message: 'Mot de passe réinitialisé avec succès.' };
   }
 
-  // ─── Envoi d'email ────────────────────────────────────────────────────────
-  private async sendResetCodeEmail(email: string, firstName: string, code: string) {
-    const transporter = nodemailer.createTransport({
+  // ─── Emails ───────────────────────────────────────────────────────────────
+  private mailer() {
+    return nodemailer.createTransport({
       host: process.env.MAIL_HOST,
       port: Number(process.env.MAIL_PORT) || 587,
       secure: false,
@@ -137,17 +229,42 @@ export class AuthService {
         pass: process.env.MAIL_PASS,
       },
     });
+  }
 
+  private async sendVerificationEmail(email: string, firstName: string, token: string) {
+    if (!process.env.MAIL_HOST) return;
+
+    const link = `${this.frontendBase()}/auth/verify-email?token=${encodeURIComponent(token)}`;
+    const transporter = this.mailer();
     await transporter.sendMail({
       from: `"Cyna" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
       to: email,
-      subject: 'Réinitialisation de mot de passe',
+      subject: 'Confirmez votre compte Cyna',
       html: `
         <p>Bonjour ${firstName},</p>
-        <p>Votre code de réinitialisation de mot de passe est :</p>
-        <h2 style="letter-spacing: 4px;">${code}</h2>
-        <p>Ce code est valable <strong>15 minutes</strong>.</p>
-        <p>Si vous n'avez pas fait cette demande, ignorez cet email.</p>
+        <p>Merci de vous être inscrit. Pour activer votre compte, confirmez votre adresse e-mail en cliquant sur le lien ci-dessous :</p>
+        <p><a href="${link}">Confirmer mon adresse e-mail</a></p>
+        <p>Ce lien est valable <strong>${VERIFY_LINK_HOURS} heures</strong>.</p>
+        <p>Si vous n'avez pas créé de compte, ignorez cet e-mail.</p>
+      `,
+    });
+  }
+
+  private async sendResetLinkEmail(email: string, firstName: string, token: string) {
+    if (!process.env.MAIL_HOST) return;
+
+    const link = `${this.frontendBase()}/auth/reset-password?token=${encodeURIComponent(token)}`;
+    const transporter = this.mailer();
+    await transporter.sendMail({
+      from: `"Cyna" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
+      to: email,
+      subject: 'Réinitialisation de votre mot de passe Cyna',
+      html: `
+        <p>Bonjour ${firstName},</p>
+        <p>Vous avez demandé à réinitialiser votre mot de passe. Cliquez sur le lien ci-dessous :</p>
+        <p><a href="${link}">Choisir un nouveau mot de passe</a></p>
+        <p>Ce lien est valable <strong>${RESET_LINK_HOURS} heures</strong>.</p>
+        <p>Si vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail.</p>
       `,
     });
   }

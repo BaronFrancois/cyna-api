@@ -16,7 +16,17 @@ export class OrdersService {
   findAllForUser(userId: number) {
     return this.prisma.order.findMany({
       where: { userId },
-      include: { items: true, billingAddress: true },
+      include: {
+        items: {
+          include: {
+            product: { include: { category: true } },
+            subscriptionPlan: true,
+          },
+        },
+        billingAddress: true,
+        paymentMethod: true,
+        invoice: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

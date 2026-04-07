@@ -10,6 +10,11 @@ export class HomeTextBlocksService {
     return this.prisma.homeTextBlock.findMany();
   }
 
+  /** Lecture publique : pas de 404 (la vitrine utilise des textes i18n en repli). */
+  findOnePublic(identifier: string) {
+    return this.prisma.homeTextBlock.findUnique({ where: { identifier } });
+  }
+
   async findOne(identifier: string) {
     const block = await this.prisma.homeTextBlock.findUnique({ where: { identifier } });
     if (!block) throw new NotFoundException('Bloc introuvable');

@@ -12,6 +12,7 @@ import {
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ConfirmTotpDto } from './dto/confirm-totp.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -36,6 +37,18 @@ export class UsersController {
   @Post('me/change-password')
   changePassword(@CurrentUser() user: any, @Body() dto: ChangePasswordDto) {
     return this.usersService.changePassword(user.sub, dto);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('me/admin-2fa/setup')
+  setupAdmin2fa(@CurrentUser() user: any) {
+    return this.usersService.setupAdminTwoFactor(user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('me/admin-2fa/confirm')
+  confirmAdmin2fa(@CurrentUser() user: any, @Body() dto: ConfirmTotpDto) {
+    return this.usersService.confirmAdminTwoFactor(user.sub, dto.token);
   }
 
   @Delete('me')

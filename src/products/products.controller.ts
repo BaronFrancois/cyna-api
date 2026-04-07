@@ -7,11 +7,13 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { CreateProductImageDto } from './dto/create-product-image.dto';
+import { ProductSearchQueryDto } from './dto/product-search-query.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -31,6 +33,19 @@ export class ProductsController {
   @Get('featured')
   findFeatured() {
     return this.productsService.findFeatured();
+  }
+
+  @Public()
+  @Get('search')
+  search(@Query() query: ProductSearchQueryDto) {
+    return this.productsService.search(query);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('admin/list')
+  findAllForAdmin() {
+    return this.productsService.findAll(false);
   }
 
   @Public()

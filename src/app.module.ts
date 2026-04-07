@@ -18,6 +18,7 @@ import { InvoicesModule } from './invoices/invoices.module';
 import { ContactModule } from './contact/contact.module';
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { PayementModule } from './v1/payement/payement.module';
+import { AdminAnalyticsModule } from './admin-analytics/admin-analytics.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 
 @Module({
@@ -40,6 +41,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     ContactModule,
     ChatbotModule,
     PayementModule,
+    AdminAnalyticsModule,
   ],
   providers: [
     {

@@ -26,8 +26,9 @@ export class HomeTextBlocksController {
 
   @Public()
   @Get(':identifier')
-  findOne(@Param('identifier') identifier: string) {
-    return this.homeTextBlocksService.findOne(identifier);
+  async findOne(@Param('identifier') identifier: string) {
+    const block = await this.homeTextBlocksService.findOnePublic(identifier);
+    return block ?? { identifier, content: '' };
   }
 
   @UseGuards(RolesGuard)

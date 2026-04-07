@@ -10,7 +10,7 @@ export class SubscriptionsService {
   findAllForUser(userId: number) {
     return this.prisma.subscription.findMany({
       where: { userId },
-      include: { product: true, subscriptionPlan: true },
+      include: { product: { include: { category: true } }, subscriptionPlan: true },
       orderBy: { createdAt: 'desc' },
     });
   }

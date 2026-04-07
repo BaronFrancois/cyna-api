@@ -16,7 +16,12 @@ export class CategoriesService {
   async findBySlug(slug: string) {
     const category = await this.prisma.category.findUnique({
       where: { slug },
-      include: { products: { where: { isAvailable: true } } },
+      include: {
+        products: {
+          include: { images: true, subscriptionPlans: true },
+          orderBy: [{ isAvailable: 'desc' }, { priorityOrder: 'asc' }],
+        },
+      },
     });
     if (!category) throw new NotFoundException('Catégorie introuvable');
     return category;

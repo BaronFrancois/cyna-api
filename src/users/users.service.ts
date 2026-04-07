@@ -2,8 +2,12 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { generateSecret, generateURI, verifySync } from 'otplib';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -59,5 +63,36 @@ export class UsersService {
     await this.findOne(id);
     await this.prisma.user.delete({ where: { id } });
     return { message: 'Compte supprimé' };
+  }
+
+  /** Génère un secret TOTP (à scanner dans une appli d’authentification). Réservé au rôle ADMIN. */
+  async setupAdminTwoFactor(userId: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException();
+    if (user.role !== Role.ADMIN) throw new ForbiddenException('Réservé aux administrateurs');
+    const secret = generateSecret();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorSecret: secret, twoFactorEnabled: false },
+    });
+    const otpauthUri = generateURI({
+      issuer: 'Cyna Admin',
+      label: user.email,
+      secret,
+    });
+    return { secret, otpauthUri };
+  }
+
+  /** Active le 2FA après vérification d’un code TOTP valide. */
+  async confirmAdminTwoFactor(userId: number, token: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.twoFactorSecret) throw new BadRequestException('2FA non initialisé — appelez setup d’abord');
+    const result = verifySync({ secret: user.twoFactorSecret, token });
+    if (!result.valid) throw new UnauthorizedException('Code TOTP invalide');
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorEnabled: true },
+    });
+    return { twoFactorEnabled: true };
   }
 }
