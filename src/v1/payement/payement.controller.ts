@@ -28,6 +28,21 @@ export class PayementController {
         return this.payementService.confirmAfter3DS(paymentIntentId);
     }
 
+    /*
+     * Flow unifié CB + PayPal via PaymentElement :
+     * Crée un Order + PaymentIntent "ouvert" et retourne le clientSecret au frontend.
+     * Le front confirme ensuite directement via stripe.confirmPayment().
+     */
+    @Post('create-intent')
+    async createIntent(
+        @Body('userId') userId: number,
+        @Body('cartId') cartId: number,
+        @Body('billingAddressId') billingAddressId: number,
+        @Body('saveCard') saveCard: boolean,
+    ) {
+        return this.payementService.createIntent(userId, cartId, billingAddressId, saveCard);
+    }
+
     @Public()
     @Post('webhook')
     async stripeWebhook(

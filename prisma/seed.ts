@@ -37,7 +37,7 @@ async function main() {
   console.log('✓ Admin prêt   : admin@cyna.fr / Admin1234!');
 
   const userHash = await bcrypt.hash('Test1234!', 10);
-  await prisma.user.upsert({
+  const testUser = await prisma.user.upsert({
     where: { email: 'user@cyna.fr' },
     update: {
       passwordHash: userHash,
@@ -57,6 +57,32 @@ async function main() {
     },
   });
   console.log('✓ User prêt    : user@cyna.fr / Test1234!');
+
+  // ─── Adresse par défaut du user de démo ──────────────────────────────────
+  // Permet de tester le parcours "Utiliser mon adresse enregistrée" au checkout.
+  const existingDefaultAddress = await prisma.address.findFirst({
+    where: { userId: testUser.id, isDefault: true },
+  });
+  if (!existingDefaultAddress) {
+    await prisma.address.create({
+      data: {
+        userId: testUser.id,
+        firstName: 'Utilisateur',
+        lastName: 'Test',
+        addressLine1: '12 rue de la Démo',
+        addressLine2: 'Bâtiment B, 3e étage',
+        city: 'Paris',
+        region: 'Île-de-France',
+        postalCode: '75010',
+        country: 'FR',
+        phone: '+33 1 23 45 67 89',
+        isDefault: true,
+      },
+    });
+    console.log('✓ Adresse par défaut créée pour user@cyna.fr');
+  } else {
+    console.log('✓ Adresse par défaut déjà présente pour user@cyna.fr');
+  }
 
   // ─── Catégories ──────────────────────────────────────────────────────────
   const categories = [

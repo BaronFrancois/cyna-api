@@ -312,7 +312,7 @@ model Order {
   id                Int         @id @default(autoincrement())
   userId            Int
   billingAddressId  Int
-  paymentMethodId   Int
+  paymentMethodId   Int?        // optionnel : PayPal ne stocke pas de PaymentMethod en DB
   orderNumber       String      @unique
   status            OrderStatus @default(PENDING)
   subtotal          Decimal     @db.Decimal(10, 2)
@@ -326,7 +326,7 @@ model Order {
 
   user           User          @relation(fields: [userId], references: [id])
   billingAddress Address       @relation(fields: [billingAddressId], references: [id])
-  paymentMethod  PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  paymentMethod  PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
   items          OrderItem[]
   invoice        Invoice?
 

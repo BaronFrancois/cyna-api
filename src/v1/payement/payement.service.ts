@@ -161,6 +161,90 @@ export class PayementService {
         return { success: paymentIntent.status === 'succeeded' };
     }
 
+    // ─── FLOW UNIFIÉ (CARTE + PAYPAL via PaymentElement) ───────────────────────
+    /*
+     * Crée un Order en statut PENDING et un PaymentIntent "ouvert" (sans paymentMethod).
+     * Le frontend utilise ensuite <PaymentElement /> + stripe.confirmPayment() :
+     *  - Carte bancaire : confirmation directe, pas de redirection
+     *  - PayPal / 3DS   : redirection vers la page de retour (return_url)
+     * Le webhook payment_intent.succeeded finalise la commande (Subscription + Invoice)
+     * et sauvegarde la carte si saveCard = true.
+     */
+    async createIntent(
+        userId: number,
+        cartId: number,
+        billingAddressId: number,
+        saveCard: boolean = true,
+    ) {
+        const stripeCustomerId = await this.createOrTake(userId);
+
+        // 1. Lecture du panier
+        const cartItems = await this.prismaService.cartItem.findMany({
+            where: { cartId },
+            include: { product: true, subscriptionPlan: true },
+        });
+        if (cartItems.length === 0) throw new Error('Panier vide');
+
+        // 2. Montants
+        const subtotal = cartItems.reduce(
+            (sum, item) => sum + Number(item.unitPrice) * item.quantity,
+            0,
+        );
+        const taxAmount = Math.round(subtotal * 0.2 * 100) / 100;
+        const totalAmount = subtotal + taxAmount;
+
+        // 3. Order en PENDING (paymentMethodId nul — il sera renseigné par le webhook
+        //    uniquement si le moyen de paiement final est une carte et que saveCard = true)
+        const order = await this.prismaService.order.create({
+            data: {
+                userId,
+                billingAddressId,
+                orderNumber: `ORD-${Date.now()}`,
+                subtotal,
+                taxAmount,
+                totalAmount,
+                paymentProvider: 'stripe',
+                items: {
+                    create: cartItems.map((item) => ({
+                        productId: item.productId,
+                        subscriptionPlanId: item.subscriptionPlanId,
+                        productName: item.product.name,
+                        planLabel: item.subscriptionPlan.label,
+                        quantity: item.quantity,
+                        unitPrice: item.unitPrice,
+                        totalPrice: Number(item.unitPrice) * item.quantity,
+                    })),
+                },
+            },
+        });
+
+        // 4. PaymentIntent "automatic methods" — Stripe expose CB, PayPal, etc.
+        //    setup_future_usage permet à Stripe d'attacher la PM au customer (pour les
+        //    cartes uniquement ; PayPal ignore cette option, ce qui ne pose pas de souci).
+        const paymentIntent = await this.client.paymentIntents.create({
+            amount: Math.round(totalAmount * 100),
+            currency: 'eur',
+            customer: stripeCustomerId,
+            automatic_payment_methods: { enabled: true },
+            setup_future_usage: saveCard ? 'off_session' : undefined,
+            metadata: {
+                orderId: String(order.id),
+                saveCard: saveCard ? '1' : '0',
+            },
+        });
+
+        await this.prismaService.order.update({
+            where: { id: order.id },
+            data: { paymentIntentId: paymentIntent.id },
+        });
+
+        return {
+            clientSecret: paymentIntent.client_secret,
+            orderId: order.id,
+            amount: totalAmount,
+        };
+    }
+
     // ─── WEBHOOK STRIPE ───────────────────────────────────────────────────────
 
     async handleWebhook(rawBody: Buffer, signature: string) {
@@ -183,18 +267,67 @@ export class PayementService {
 
             const order = await this.prismaService.order.findUnique({
                 where: { id: orderId },
-                include: { items: { include: { subscriptionPlan: true } } },
+                include: { items: { include: { subscriptionPlan: true, subscription: true } } },
             });
             if (!order) return { received: true };
 
-            // Marquer la commande comme payée
+            // Idempotence : si la commande est déjà marquée PAID, on ignore (webhook rejoué)
+            if (order.status === 'PAID') return { received: true };
+
+            // 1. Sauvegarder la carte si demandé et si c'est bien une carte (PayPal est ignoré)
+            const saveCard = paymentIntent.metadata?.saveCard === '1';
+            let savedPaymentMethodId: number | undefined;
+
+            if (saveCard && paymentIntent.payment_method) {
+                try {
+                    const pmId = typeof paymentIntent.payment_method === 'string'
+                        ? paymentIntent.payment_method
+                        : paymentIntent.payment_method.id;
+                    const pm = await this.client.paymentMethods.retrieve(pmId);
+
+                    if (pm.type === 'card' && pm.card) {
+                        const exists = await this.prismaService.paymentMethod.findFirst({
+                            where: { userId: order.userId, providerToken: pmId },
+                        });
+                        if (!exists) {
+                            const hasDefault = await this.prismaService.paymentMethod.count({
+                                where: { userId: order.userId, isDefault: true },
+                            });
+                            const created = await this.prismaService.paymentMethod.create({
+                                data: {
+                                    userId: order.userId,
+                                    providerToken: pmId,
+                                    cardHolderName: pm.billing_details?.name ?? '',
+                                    last4Digits: pm.card.last4,
+                                    cardBrand: pm.card.brand,
+                                    expMonth: pm.card.exp_month,
+                                    expYear: pm.card.exp_year,
+                                    isDefault: hasDefault === 0,
+                                },
+                            });
+                            savedPaymentMethodId = created.id;
+                        } else {
+                            savedPaymentMethodId = exists.id;
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[webhook] Sauvegarde carte échouée:', err);
+                }
+            }
+
+            // 2. Marquer la commande comme payée (+ lier la PM si sauvegardée)
             await this.prismaService.order.update({
                 where: { id: orderId },
-                data: { status: 'PAID', paidAt: new Date() },
+                data: {
+                    status: 'PAID',
+                    paidAt: new Date(),
+                    ...(savedPaymentMethodId ? { paymentMethodId: savedPaymentMethodId } : {}),
+                },
             });
 
-            // Créer les abonnements pour chaque ligne de commande
+            // 3. Créer les abonnements (uniquement ceux qui n'existent pas déjà)
             for (const item of order.items) {
+                if (item.subscription) continue; // abonnement déjà créé (idempotence)
                 const plan = item.subscriptionPlan;
                 const startDate = new Date();
                 const endDate = new Date(startDate);
@@ -220,16 +353,21 @@ export class PayementService {
                 });
             }
 
-            // Créer la facture
-            await this.prismaService.invoice.create({
-                data: {
-                    orderId: order.id,
-                    userId: order.userId,
-                    invoiceNumber: `INV-${Date.now()}`,
-                    amount: order.totalAmount,
-                    issuedAt: new Date(),
-                },
+            // 4. Créer la facture si pas déjà présente
+            const existingInvoice = await this.prismaService.invoice.findFirst({
+                where: { orderId: order.id },
             });
+            if (!existingInvoice) {
+                await this.prismaService.invoice.create({
+                    data: {
+                        orderId: order.id,
+                        userId: order.userId,
+                        invoiceNumber: `INV-${Date.now()}`,
+                        amount: order.totalAmount,
+                        issuedAt: new Date(),
+                    },
+                });
+            }
         }
 
         return { received: true };
