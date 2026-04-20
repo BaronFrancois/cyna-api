@@ -3,6 +3,12 @@
 /node_modules
 /build
 
+# Compiled Prisma/TS config artifacts (only .ts source should be tracked)
+prisma.config.js
+prisma.config.js.map
+prisma.config.d.ts
+tsconfig.build.tsbuildinfo
+
 # Logs
 logs
 *.log
