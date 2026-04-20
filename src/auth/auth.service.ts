@@ -40,30 +40,38 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const emailVerificationToken = randomBytes(32).toString('hex');
 
+    // Si aucun serveur SMTP n'est configuré (déploiement démo, free tier…),
+    // on ne peut pas envoyer le mail de confirmation : on active donc
+    // directement le compte pour ne pas bloquer le parcours utilisateur.
+    const autoVerify = !process.env.MAIL_HOST;
+
     const user = await this.prisma.user.create({
       data: {
         firstName: dto.firstName,
         lastName: dto.lastName,
         email: dto.email,
         passwordHash,
-        emailVerified: false,
-        emailVerificationToken,
+        emailVerified: autoVerify,
+        emailVerifiedAt: autoVerify ? new Date() : null,
+        emailVerificationToken: autoVerify ? null : emailVerificationToken,
       },
       select: { id: true, firstName: true, lastName: true, email: true, role: true, createdAt: true },
     });
 
-    try {
-      await this.sendVerificationEmail(user.email, user.firstName, emailVerificationToken);
-    } catch {
-      // Ne bloque pas l'inscription si l'email est indisponible
-    }
-    if (!process.env.MAIL_HOST) {
-      const u = `${this.frontendBase()}/auth/verify-email?token=${encodeURIComponent(emailVerificationToken)}`;
-      console.warn(`[auth] MAIL_HOST non configuré — lien de confirmation (dev) : ${u}`);
+    if (!autoVerify) {
+      try {
+        await this.sendVerificationEmail(user.email, user.firstName, emailVerificationToken);
+      } catch {
+        // Ne bloque pas l'inscription si l'email est indisponible
+      }
+    } else {
+      console.warn('[auth] MAIL_HOST non configuré — compte activé automatiquement.');
     }
 
     return {
-      message: 'Compte créé. Un email de confirmation vous a été envoyé.',
+      message: autoVerify
+        ? 'Compte créé. Vous pouvez vous connecter dès maintenant.'
+        : 'Compte créé. Un email de confirmation vous a été envoyé.',
       user,
     };
   }

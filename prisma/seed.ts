@@ -9,18 +9,54 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  // ─── Admin ───────────────────────────────────────────────────────────────
-  const adminEmail = 'admin@cyna.fr';
-  const existing = await prisma.user.findUnique({ where: { email: adminEmail } });
-  if (!existing) {
-    const hashed = await bcrypt.hash('Admin1234!', 10);
-    const admin = await prisma.user.create({
-      data: { firstName: 'Admin', lastName: 'Cyna', email: adminEmail, passwordHash: hashed, role: Role.ADMIN },
-    });
-    console.log(`✓ Admin créé : ${admin.email}`);
-  } else {
-    console.log(`✓ Admin déjà existant : ${adminEmail}`);
-  }
+  // ─── Comptes de test (alignés sur TEST_ACCOUNTS.md) ──────────────────────
+  // `upsert` + update pour aussi mettre à jour les comptes seedés précédemment
+  // (par ex. pour activer emailVerified sur un admin créé sans ce flag).
+  const now = new Date();
+
+  const adminHash = await bcrypt.hash('Admin1234!', 10);
+  await prisma.user.upsert({
+    where: { email: 'admin@cyna.fr' },
+    update: {
+      passwordHash: adminHash,
+      role: Role.ADMIN,
+      emailVerified: true,
+      emailVerifiedAt: now,
+      emailVerificationToken: null,
+    },
+    create: {
+      firstName: 'Admin',
+      lastName: 'Cyna',
+      email: 'admin@cyna.fr',
+      passwordHash: adminHash,
+      role: Role.ADMIN,
+      emailVerified: true,
+      emailVerifiedAt: now,
+    },
+  });
+  console.log('✓ Admin prêt   : admin@cyna.fr / Admin1234!');
+
+  const userHash = await bcrypt.hash('Test1234!', 10);
+  await prisma.user.upsert({
+    where: { email: 'user@cyna.fr' },
+    update: {
+      passwordHash: userHash,
+      role: Role.USER,
+      emailVerified: true,
+      emailVerifiedAt: now,
+      emailVerificationToken: null,
+    },
+    create: {
+      firstName: 'Utilisateur',
+      lastName: 'Test',
+      email: 'user@cyna.fr',
+      passwordHash: userHash,
+      role: Role.USER,
+      emailVerified: true,
+      emailVerifiedAt: now,
+    },
+  });
+  console.log('✓ User prêt    : user@cyna.fr / Test1234!');
 
   // ─── Catégories ──────────────────────────────────────────────────────────
   const categories = [
