@@ -72,6 +72,7 @@ export class AuthService {
       message: autoVerify
         ? 'Compte créé. Vous pouvez vous connecter dès maintenant.'
         : 'Compte créé. Un email de confirmation vous a été envoyé.',
+      autoVerified: autoVerify,
       user,
     };
   }
