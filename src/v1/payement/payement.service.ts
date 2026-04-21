@@ -25,7 +25,18 @@ export class PayementService {
     private async createOrTake(userId: number): Promise<string> {
         const user = await this.prismaService.user.findUnique({ where: { id: userId } });
 
-        if (user.stripeCustomerId) return user.stripeCustomerId;
+        if (user.stripeCustomerId) {
+            // Vérifie que le customer existe toujours dans le compte Stripe courant.
+            // S'il a été créé sur un autre compte (reset, changement de clés), on le recrée.
+            try {
+                const existing = await this.client.customers.retrieve(user.stripeCustomerId);
+                if (existing && !(existing as Stripe.DeletedCustomer).deleted) {
+                    return user.stripeCustomerId;
+                }
+            } catch {
+                // "No such customer" ou réseau : on tombe sur la création ci-dessous.
+            }
+        }
 
         const customer = await this.client.customers.create({
             name: `${user.firstName} ${user.lastName}`,
