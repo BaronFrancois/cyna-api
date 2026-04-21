@@ -256,6 +256,8 @@ model CarouselItem {
   imageUrl     String
   title        String?
   subtitle     String?
+  titleEn      String?
+  subtitleEn   String?
   linkUrl      String?
   displayOrder Int      @default(0)
   isActive     Boolean  @default(true)

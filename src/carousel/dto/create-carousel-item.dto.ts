@@ -14,6 +14,14 @@ export class CreateCarouselItemDto {
 
   @IsString()
   @IsOptional()
+  titleEn?: string;
+
+  @IsString()
+  @IsOptional()
+  subtitleEn?: string;
+
+  @IsString()
+  @IsOptional()
   linkUrl?: string;
 
   @IsInt()
