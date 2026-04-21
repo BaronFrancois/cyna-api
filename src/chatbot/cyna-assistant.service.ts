@@ -7,10 +7,19 @@ import {
 import { GoogleGenAI } from '@google/genai';
 import { VitrineChatDto } from './dto/vitrine-chat.dto';
 
-const CYNA_SYSTEM = `Tu es Cyna, un assistant support IA professionnel et utile pour une entreprise de cybersécurité SaaS premium.
+const CYNA_SYSTEM_FR = `Tu es Cyna, un assistant support IA professionnel et utile pour une entreprise de cybersécurité SaaS premium.
 Ton ton est à la Apple : calme, concis, professionnel et rassurant.
 Tu aides les utilisateurs à comprendre les offres Cyna (EDR & Digital Workplace, SOC managé 24/7, plateforme, CERT, pentest) alignées sur cyna-it.fr.
 Réponds toujours en Français. Garde les réponses courtes et bien formatées.`;
+
+const CYNA_SYSTEM_EN = `You are Cyna, a professional and helpful AI support assistant for a premium SaaS cybersecurity company.
+Your tone is Apple-like: calm, concise, professional and reassuring.
+You help users understand Cyna's offerings (EDR & Digital Workplace, 24/7 managed SOC, platform, CERT, pentest) aligned with cyna-it.fr.
+Always reply in English. Keep answers short and well formatted.`;
+
+function getSystemPrompt(locale?: 'fr' | 'en') {
+  return locale === 'en' ? CYNA_SYSTEM_EN : CYNA_SYSTEM_FR;
+}
 
 const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions';
 
@@ -19,9 +28,13 @@ type GeminiHistoryPart = {
   parts: { text: string }[];
 };
 
-function buildGroqMessages(message: string, history: GeminiHistoryPart[]) {
+function buildGroqMessages(
+  message: string,
+  history: GeminiHistoryPart[],
+  locale?: 'fr' | 'en',
+) {
   const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] =
-    [{ role: 'system', content: CYNA_SYSTEM.trim() }];
+    [{ role: 'system', content: getSystemPrompt(locale).trim() }];
 
   for (const h of history ?? []) {
     const text = h.parts?.[0]?.text?.trim();
@@ -42,7 +55,7 @@ export class CynaAssistantService {
   private readonly logger = new Logger(CynaAssistantService.name);
 
   async reply(dto: VitrineChatDto): Promise<{ text: string }> {
-    const { message, history } = dto;
+    const { message, history, locale } = dto;
     if (!message?.trim()) {
       throw new BadRequestException('Message requis.');
     }
@@ -58,8 +71,8 @@ export class CynaAssistantService {
 
     try {
       const text = hasGroq
-        ? await this.chatWithGroq(message, history ?? [])
-        : await this.chatWithGemini(message, history ?? []);
+        ? await this.chatWithGroq(message, history ?? [], locale)
+        : await this.chatWithGemini(message, history ?? [], locale);
       return { text };
     } catch (err) {
       this.logger.error('Assistant LLM', err);
@@ -72,6 +85,7 @@ export class CynaAssistantService {
   private async chatWithGroq(
     message: string,
     history: GeminiHistoryPart[],
+    locale?: 'fr' | 'en',
   ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error('GROQ_API_KEY manquante');
@@ -86,7 +100,7 @@ export class CynaAssistantService {
       },
       body: JSON.stringify({
         model,
-        messages: buildGroqMessages(message, history),
+        messages: buildGroqMessages(message, history, locale),
         temperature: 0.35,
         max_tokens: 1024,
       }),
@@ -110,6 +124,7 @@ export class CynaAssistantService {
   private async chatWithGemini(
     message: string,
     history: GeminiHistoryPart[],
+    locale?: 'fr' | 'en',
   ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('GEMINI_API_KEY manquante');
@@ -118,7 +133,7 @@ export class CynaAssistantService {
     const chat = ai.chats.create({
       model: 'gemini-2.5-flash',
       config: {
-        systemInstruction: CYNA_SYSTEM,
+        systemInstruction: getSystemPrompt(locale),
       },
       history,
     });

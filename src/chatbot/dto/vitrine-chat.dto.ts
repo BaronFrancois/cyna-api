@@ -31,4 +31,8 @@ export class VitrineChatDto {
   @ValidateNested({ each: true })
   @Type(() => HistoryItemDto)
   history?: HistoryItemDto[];
+
+  @IsOptional()
+  @IsIn(['fr', 'en'])
+  locale?: 'fr' | 'en';
 }
